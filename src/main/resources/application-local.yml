@@ -1,0 +1,10 @@
+# Local development only. Activate with SPRING_PROFILES_ACTIVE=local
+app:
+  jwt:
+    secret: ${JWT_SECRET:local-dev-only-secret-change-me-min-32-bytes-long}
+  otp:
+    fixed-code: "000000"
+
+logging:
+  level:
+    com.instanthelp: DEBUG

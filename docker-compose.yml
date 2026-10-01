@@ -1,0 +1,40 @@
+name: instant-help
+
+services:
+  # Local PostgreSQL. Started by default: `docker compose up -d`
+  postgres:
+    image: postgres:16-alpine
+    container_name: instant-help-postgres
+    environment:
+      POSTGRES_DB: instanthelp
+      POSTGRES_USER: instanthelp
+      POSTGRES_PASSWORD: instanthelp
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U instanthelp -d instanthelp"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # The Spring Boot app in a container. Only starts with the "app" profile:
+  #   docker compose --profile app up --build
+  app:
+    profiles: ["app"]
+    build: .
+    container_name: instant-help-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: local      # local = dev secret + fixed OTP 000000 (never use in production)
+      DB_URL: jdbc:postgresql://postgres:5432/instanthelp
+      DB_USER: instanthelp
+      DB_PASSWORD: instanthelp
+    ports:
+      - "${APP_PORT:-8080}:8080"
+
+volumes:
+  pgdata:
