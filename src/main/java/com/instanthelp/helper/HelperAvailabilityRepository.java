@@ -99,6 +99,34 @@ public class HelperAvailabilityRepository {
                 .query(MAPPER).optional();
     }
 
+    /**
+     * THE assignment decision: reserve one helper for one task with a single conditional UPDATE. Of any number of
+     * concurrent callers, the row lock lets exactly one see the row still AVAILABLE; the others get nothing back.
+     * Also re-checks in Postgres what Redis only suggested: the heartbeat is fresh, the helper is not the
+     * requester and does serve the task's category.
+     */
+    public Optional<HelperAvailability> reserve(UUID availabilityId, UUID taskId, UUID requesterId, String categoryCode,
+                                                java.time.Duration offerTtl, java.time.Duration heartbeatTimeout) {
+        return jdbc.sql("""
+                        update helper_availability
+                           set status = 'OFFERED', current_task_id = :taskId,
+                               offer_expires_at = now() + make_interval(secs => :offerTtl),
+                               version = version + 1, updated_at = now()
+                         where id = :id
+                           and status = 'AVAILABLE'
+                           and last_heartbeat_at > now() - make_interval(secs => :heartbeatTimeout)
+                           and helper_id <> :requesterId
+                           and :category = any (category_codes)
+                         returning *""")
+                .param("id", availabilityId)
+                .param("taskId", taskId)
+                .param("requesterId", requesterId)
+                .param("category", categoryCode)
+                .param("offerTtl", offerTtl.toMillis() / 1000.0)
+                .param("heartbeatTimeout", heartbeatTimeout.toMillis() / 1000.0)
+                .query(MAPPER).optional();
+    }
+
     /** Only from AVAILABLE. */
     public Optional<HelperAvailability> goOffline(UUID helperId) {
         return jdbc.sql("""

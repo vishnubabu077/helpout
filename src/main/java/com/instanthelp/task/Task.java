@@ -91,6 +91,27 @@ public class Task {
         this.status = status;
     }
 
+    /** OPEN -> MATCHING: a helper has been reserved and must accept before the offer expires. */
+    void offerTo(UUID helperId) {
+        this.status = TaskStatus.MATCHING;
+        this.providerId = helperId;
+    }
+
+    /** MATCHING -> OPEN: the helper declined or the offer expired. */
+    void reopen() {
+        this.status = TaskStatus.OPEN;
+        this.providerId = null;
+    }
+
+    /** MATCHING -> ASSIGNED: the offered helper accepted. */
+    void assign() {
+        this.status = TaskStatus.ASSIGNED;
+    }
+
+    void cancel() {
+        this.status = TaskStatus.CANCELLED;
+    }
+
     @PreUpdate
     void touch() {
         this.updatedAt = Instant.now();

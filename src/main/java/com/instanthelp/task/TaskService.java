@@ -1,6 +1,7 @@
 package com.instanthelp.task;
 
 import com.instanthelp.common.BusinessRuleException;
+import com.instanthelp.common.ConflictException;
 import com.instanthelp.common.ForbiddenException;
 import com.instanthelp.common.NotFoundException;
 import com.instanthelp.common.PagedResponse;
@@ -15,6 +16,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -65,6 +67,22 @@ public class TaskService {
                 req.startTime(), req.endTime(), req.offeredAmount(), currency, TaskStatus.OPEN));
         events.save(new TaskEvent(task.getId(), requesterId, "TASK_CREATED", null, TaskStatus.OPEN));
         return TaskResponse.from(task);
+    }
+
+    /**
+     * OPEN -> MATCHING with the reserved helper. Joins the caller's transaction (the reservation and the outbox
+     * event commit or roll back together with this). The version check makes two racing transitions of the same
+     * task end in a 409 for the loser.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void offerTo(UUID taskId, UUID actorId, UUID helperId) {
+        Task task = tasks.findById(taskId).orElseThrow(() -> new NotFoundException("Task not found"));
+        if (task.getStatus() != TaskStatus.OPEN) {
+            throw new ConflictException("TASK_NOT_OPEN", "Task is " + task.getStatus() + ", not OPEN");
+        }
+        task.offerTo(helperId);
+        tasks.saveAndFlush(task);
+        events.save(new TaskEvent(taskId, actorId, "HELPER_OFFERED", TaskStatus.OPEN, TaskStatus.MATCHING));
     }
 
     /** Owner-only for now. Provider visibility of OPEN tasks arrives with discovery. Returns 404 to non-owners. */
