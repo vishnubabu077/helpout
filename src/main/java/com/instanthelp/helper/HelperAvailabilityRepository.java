@@ -59,6 +59,16 @@ public class HelperAvailabilityRepository {
                 .param("helperId", helperId).query(MAPPER).optional();
     }
 
+    /** AVAILABLE rows whose heartbeat is still within the timeout: what Redis should contain. */
+    public List<HelperAvailability> findFreshAvailable(java.time.Duration heartbeatTimeout) {
+        return jdbc.sql("""
+                        select * from helper_availability
+                         where status = 'AVAILABLE'
+                           and last_heartbeat_at > now() - make_interval(secs => :timeoutSeconds)""")
+                .param("timeoutSeconds", (double) heartbeatTimeout.toSeconds())
+                .query(MAPPER).list();
+    }
+
     /** Throws DuplicateKeyException if the helper already has an active row (partial unique index). */
     public HelperAvailability insertAvailable(UUID helperId, double lat, double lng, List<String> categories,
                                               int maxDistanceM) {

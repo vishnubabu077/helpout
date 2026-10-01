@@ -13,6 +13,28 @@ spring:
       hibernate.jdbc.time_zone: UTC
   flyway:
     enabled: true
+  data:
+    redis:                          # rebuildable read cache only; Postgres stays the source of truth
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2s
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        max.block.ms: 5000          # fail fast when the broker is down; the outbox row stays unpublished
+        request.timeout.ms: 5000
+        delivery.timeout.ms: 10000
+    consumer:
+      group-id: helper-geo-projector
+      auto-offset-reset: earliest   # a new projector replays history; events are idempotent
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
   jackson:
     default-property-inclusion: non_null
 

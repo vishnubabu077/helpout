@@ -5,6 +5,16 @@ app:
   otp:
     fixed-code: "000000"
 
+# Infrastructure from `docker compose up -d` (kafka is published on 29092 for the host, redis on 6379)
+spring:
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
 logging:
   level:
     com.instanthelp: DEBUG
+    org.apache.kafka: WARN

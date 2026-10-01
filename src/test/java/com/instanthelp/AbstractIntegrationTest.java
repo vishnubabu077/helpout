@@ -18,11 +18,14 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.kafka.KafkaContainer;
+import org.testcontainers.lifecycle.Startables;
 
 /**
- * Requires Docker. One throwaway PostgreSQL is shared by every integration test class (and so is the Spring
- * context). Uses the "local" profile: dev secret + OTP 000000. Tests isolate themselves with unique phone
+ * Requires Docker. One throwaway PostgreSQL, Kafka and Redis are shared by every integration test class (and so
+ * is the Spring context). Uses the "local" profile: dev secret + OTP 000000. Tests isolate themselves with unique phone
  * numbers, ids and coordinates instead of cleaning the database.
  */
 @SpringBootTest
@@ -31,9 +34,11 @@ import org.testcontainers.containers.PostgreSQLContainer;
 public abstract class AbstractIntegrationTest {
 
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:3.8.0");
+    static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
 
     static {
-        POSTGRES.start();
+        Startables.deepStart(POSTGRES, KAFKA, REDIS).join();
     }
 
     @DynamicPropertySource
@@ -41,6 +46,9 @@ public abstract class AbstractIntegrationTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
+        registry.add("spring.kafka.bootstrap-servers", KAFKA::getBootstrapServers);
+        registry.add("spring.data.redis.host", REDIS::getHost);
+        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
     }
 
     @Autowired protected MockMvc mvc;
@@ -67,6 +75,14 @@ public abstract class AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn();
         return json.readTree(result.getResponse().getContentAsString()).get("accessToken").asText();
+    }
+
+    /** Signs in a new user, promotes it to ADMIN in the database and signs in again to get an ADMIN token. */
+    protected String signInAdmin() throws Exception {
+        String phone = newPhone();
+        signIn(phone);
+        jdbc.update("update app_user set role = 'ADMIN' where phone_e164 = ?", phone);
+        return signIn(phone);
     }
 
     /** The user id is the JWT subject. */
