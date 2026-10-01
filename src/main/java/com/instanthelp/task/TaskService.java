@@ -9,9 +9,12 @@ import com.instanthelp.config.AppProperties;
 import com.instanthelp.identity.AppUser;
 import com.instanthelp.identity.AppUserRepository;
 import com.instanthelp.identity.UserStatus;
+import com.instanthelp.outbox.OutboxService;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -27,14 +30,19 @@ public class TaskService {
     private final TaskCategoryRepository categories;
     private final AppUserRepository users;
     private final AppProperties props;
+    private final OutboxService outbox;
+    private final ApplicationEventPublisher publisher;
 
     public TaskService(TaskRepository tasks, TaskEventRepository events, TaskCategoryRepository categories,
-                       AppUserRepository users, AppProperties props) {
+                       AppUserRepository users, AppProperties props, OutboxService outbox,
+                       ApplicationEventPublisher publisher) {
         this.tasks = tasks;
         this.events = events;
         this.categories = categories;
         this.users = users;
         this.props = props;
+        this.outbox = outbox;
+        this.publisher = publisher;
     }
 
     /** Validates business rules server-side, then publishes the task as OPEN and records an audit event. */
@@ -83,6 +91,54 @@ public class TaskService {
         task.offerTo(helperId);
         tasks.saveAndFlush(task);
         events.save(new TaskEvent(taskId, actorId, "HELPER_OFFERED", TaskStatus.OPEN, TaskStatus.MATCHING));
+    }
+
+    /** MATCHING -> ASSIGNED when the offered helper accepts. Writes the TaskAssigned outbox event. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void offerAccepted(UUID taskId, UUID helperId) {
+        Task task = tasks.findById(taskId).orElseThrow(() -> new NotFoundException("Task not found"));
+        if (task.getStatus() != TaskStatus.MATCHING || !helperId.equals(task.getProviderId())) {
+            throw new ConflictException("OFFER_EXPIRED", "The offer is no longer valid");
+        }
+        task.assign();
+        tasks.saveAndFlush(task);
+        events.save(new TaskEvent(taskId, helperId, "HELPER_ACCEPTED", TaskStatus.MATCHING, TaskStatus.ASSIGNED));
+        outbox.append("TASK", taskId, "TaskAssigned", taskId.toString(),
+                new TaskOutboxEvent(taskId, task.getRequesterId(), helperId, TaskStatus.ASSIGNED, Instant.now()));
+    }
+
+    /**
+     * MATCHING -> OPEN after the helper declined or the offer expired. Does nothing if the task moved on in the
+     * meantime (e.g. the requester cancelled it).
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void offerReleased(UUID taskId, UUID helperId, String eventType) {
+        Task task = tasks.findById(taskId).orElse(null);
+        if (task == null || task.getStatus() != TaskStatus.MATCHING || !helperId.equals(task.getProviderId())) {
+            return;
+        }
+        task.reopen();
+        tasks.saveAndFlush(task);
+        events.save(new TaskEvent(taskId, helperId, eventType, TaskStatus.MATCHING, TaskStatus.OPEN));
+    }
+
+    /** The requester cancels. Allowed until the task is finished; frees any helper holding an offer or the task. */
+    @Transactional
+    public TaskResponse cancel(UUID requesterId, UUID taskId) {
+        Task task = tasks.findByIdAndRequesterId(taskId, requesterId)
+                .orElseThrow(() -> new NotFoundException("Task not found"));
+        TaskStatus from = task.getStatus();
+        if (from != TaskStatus.OPEN && from != TaskStatus.MATCHING && from != TaskStatus.ASSIGNED) {
+            throw new ConflictException("TASK_NOT_CANCELLABLE", "A task that is " + from + " cannot be cancelled");
+        }
+        UUID helperId = task.getProviderId();
+        task.cancel();
+        tasks.saveAndFlush(task);
+        events.save(new TaskEvent(taskId, requesterId, "TASK_CANCELLED", from, TaskStatus.CANCELLED));
+        outbox.append("TASK", taskId, "TaskCancelled", taskId.toString(),
+                new TaskOutboxEvent(taskId, requesterId, helperId, TaskStatus.CANCELLED, Instant.now()));
+        publisher.publishEvent(new TaskClosedEvent(taskId, TaskStatus.CANCELLED));
+        return TaskResponse.from(task);
     }
 
     /** Owner-only for now. Provider visibility of OPEN tasks arrives with discovery. Returns 404 to non-owners. */

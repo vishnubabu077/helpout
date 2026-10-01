@@ -49,6 +49,8 @@ public abstract class AbstractIntegrationTest {
         registry.add("spring.kafka.bootstrap-servers", KAFKA::getBootstrapServers);
         registry.add("spring.data.redis.host", REDIS::getHost);
         registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
+        // Tests that age rows on purpose call AvailabilitySweeper.sweep() themselves; the scheduled run would race them.
+        registry.add("app.matching.sweep-interval", () -> "1h");
     }
 
     @Autowired protected MockMvc mvc;

@@ -83,6 +83,13 @@ public class HelperAvailabilityService {
         throw notAvailable();
     }
 
+    /** Task completed or cancelled: free the helper who was offered or assigned to it (they go OFFLINE). */
+    @Transactional
+    public void releaseForTask(UUID taskId) {
+        repository.releaseForTask(taskId)
+                .forEach(row -> events.emit(AvailabilityEventType.HelperUnavailable, row));
+    }
+
     @Transactional(readOnly = true)
     public AvailabilityResponse current(UUID helperId) {
         return repository.findActiveByHelper(helperId).map(AvailabilityResponse::from)

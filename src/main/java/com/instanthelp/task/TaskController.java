@@ -57,6 +57,16 @@ public class TaskController {
         return service.listMine(SecurityUtils.userId(jwt), page, size);
     }
 
+    @PostMapping("/{id}/cancel")
+    @Operation(summary = "Cancel one of my help requests",
+            description = "Allowed while OPEN, MATCHING or ASSIGNED. A helper holding an offer or the task is released.")
+    @ApiResponse(responseCode = "200", description = "Cancelled")
+    @ApiResponse(responseCode = "404", description = "Not found (or not yours)")
+    @ApiResponse(responseCode = "409", description = "TASK_NOT_CANCELLABLE")
+    public TaskResponse cancel(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
+        return service.cancel(SecurityUtils.userId(jwt), id);
+    }
+
     @GetMapping("/{id}")
     @Operation(summary = "Get one of my help requests")
     @ApiResponse(responseCode = "404", description = "Not found (or not yours)")

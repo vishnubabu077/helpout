@@ -2,6 +2,8 @@ package com.instanthelp.helper;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -44,7 +46,7 @@ public class HelperAvailabilityRepository {
                 rs.getLong("version"));
     }
 
-    static java.time.Instant instant(ResultSet rs, String column) throws SQLException {
+    static Instant instant(ResultSet rs, String column) throws SQLException {
         OffsetDateTime value = rs.getObject(column, OffsetDateTime.class);
         return value == null ? null : value.toInstant();
     }
@@ -60,7 +62,7 @@ public class HelperAvailabilityRepository {
     }
 
     /** AVAILABLE rows whose heartbeat is still within the timeout: what Redis should contain. */
-    public List<HelperAvailability> findFreshAvailable(java.time.Duration heartbeatTimeout) {
+    public List<HelperAvailability> findFreshAvailable(Duration heartbeatTimeout) {
         return jdbc.sql("""
                         select * from helper_availability
                          where status = 'AVAILABLE'
@@ -106,7 +108,7 @@ public class HelperAvailabilityRepository {
      * requester and does serve the task's category.
      */
     public Optional<HelperAvailability> reserve(UUID availabilityId, UUID taskId, UUID requesterId, String categoryCode,
-                                                java.time.Duration offerTtl, java.time.Duration heartbeatTimeout) {
+                                                Duration offerTtl, Duration heartbeatTimeout) {
         return jdbc.sql("""
                         update helper_availability
                            set status = 'OFFERED', current_task_id = :taskId,
@@ -125,6 +127,90 @@ public class HelperAvailabilityRepository {
                 .param("offerTtl", offerTtl.toMillis() / 1000.0)
                 .param("heartbeatTimeout", heartbeatTimeout.toMillis() / 1000.0)
                 .query(MAPPER).optional();
+    }
+
+    /** A row that left OFFERED, plus the task it was offered for (current_task_id is cleared on the row). */
+    public record Released(HelperAvailability row, UUID taskId) {}
+
+    private static Released mapReleased(ResultSet rs, int rowNum) throws SQLException {
+        return new Released(map(rs, rowNum), rs.getObject("released_task_id", UUID.class));
+    }
+
+    /** OFFERED -> ASSIGNED, only while the offer has not expired. Racing with the expiry sweeper: one of them wins. */
+    public Optional<HelperAvailability> accept(UUID helperId) {
+        return jdbc.sql("""
+                        update helper_availability
+                           set status = 'ASSIGNED', offer_expires_at = null, version = version + 1, updated_at = now()
+                         where helper_id = :helperId and status = 'OFFERED' and offer_expires_at > now()
+                         returning *""")
+                .param("helperId", helperId)
+                .query(MAPPER).optional();
+    }
+
+    /** OFFERED -> AVAILABLE (the helper said no). */
+    public Optional<Released> decline(UUID helperId) {
+        return jdbc.sql("""
+                        with picked as (
+                            select id, current_task_id from helper_availability
+                             where helper_id = :helperId and status = 'OFFERED' for update)
+                        update helper_availability h
+                           set status = 'AVAILABLE', current_task_id = null, offer_expires_at = null,
+                               version = h.version + 1, updated_at = now()
+                          from picked p where h.id = p.id
+                        returning h.*, p.current_task_id as released_task_id""")
+                .param("helperId", helperId)
+                .query(HelperAvailabilityRepository::mapReleased).optional();
+    }
+
+    /**
+     * Offers past offer_expires_at are treated as declined. SKIP LOCKED lets several instances sweep at once and
+     * leaves rows that are being accepted right now alone. A helper whose heartbeat is also stale goes OFFLINE
+     * instead of flapping through AVAILABLE.
+     */
+    public List<Released> releaseExpiredOffers(Duration heartbeatTimeout, int limit) {
+        return jdbc.sql("""
+                        with picked as (
+                            select id, current_task_id from helper_availability
+                             where status = 'OFFERED' and offer_expires_at <= now()
+                             order by offer_expires_at limit :limit for update skip locked)
+                        update helper_availability h
+                           set status = case when h.last_heartbeat_at > now() - make_interval(secs => :heartbeatTimeout)
+                                             then 'AVAILABLE' else 'OFFLINE' end,
+                               current_task_id = null, offer_expires_at = null,
+                               version = h.version + 1, updated_at = now()
+                          from picked p where h.id = p.id
+                        returning h.*, p.current_task_id as released_task_id""")
+                .param("limit", limit)
+                .param("heartbeatTimeout", heartbeatTimeout.toMillis() / 1000.0)
+                .query(HelperAvailabilityRepository::mapReleased).list();
+    }
+
+    /** AVAILABLE rows whose phone stopped heart-beating become OFFLINE. */
+    public List<HelperAvailability> offlineStaleAvailable(Duration heartbeatTimeout, int limit) {
+        return jdbc.sql("""
+                        with picked as (
+                            select id from helper_availability
+                             where status = 'AVAILABLE'
+                               and last_heartbeat_at < now() - make_interval(secs => :heartbeatTimeout)
+                             order by last_heartbeat_at limit :limit for update skip locked)
+                        update helper_availability h
+                           set status = 'OFFLINE', version = h.version + 1, updated_at = now()
+                          from picked p where h.id = p.id
+                        returning h.*""")
+                .param("limit", limit)
+                .param("heartbeatTimeout", heartbeatTimeout.toMillis() / 1000.0)
+                .query(MAPPER).list();
+    }
+
+    /** The task was completed or cancelled: free whoever was offered or assigned to it. */
+    public List<HelperAvailability> releaseForTask(UUID taskId) {
+        return jdbc.sql("""
+                        update helper_availability
+                           set status = 'OFFLINE', version = version + 1, updated_at = now()
+                         where current_task_id = :taskId and status in ('OFFERED', 'ASSIGNED')
+                         returning *""")
+                .param("taskId", taskId)
+                .query(MAPPER).list();
     }
 
     /** Only from AVAILABLE. */
