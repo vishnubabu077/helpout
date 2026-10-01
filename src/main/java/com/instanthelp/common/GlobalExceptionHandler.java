@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -30,7 +31,18 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(NotFoundException.class)
     ResponseEntity<ProblemDetail> notFound(NotFoundException ex) {
-        return problem(HttpStatus.NOT_FOUND, "NOT_FOUND", ex.getMessage());
+        return problem(HttpStatus.NOT_FOUND, ex.getCode(), ex.getMessage());
+    }
+
+    @ExceptionHandler(ConflictException.class)
+    ResponseEntity<ProblemDetail> conflict(ConflictException ex) {
+        return problem(HttpStatus.CONFLICT, ex.getCode(), ex.getMessage());
+    }
+
+    /** A concurrent writer won (JPA @Version). The client can re-read and retry. */
+    @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
+    ResponseEntity<ProblemDetail> optimisticLock(ObjectOptimisticLockingFailureException ex) {
+        return problem(HttpStatus.CONFLICT, "CONCURRENT_MODIFICATION", "The resource was modified concurrently, retry");
     }
 
     @ExceptionHandler(ForbiddenException.class)

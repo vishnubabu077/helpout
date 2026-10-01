@@ -41,6 +41,15 @@ app:
   task:
     min-duration-minutes: 30        # assumption from the sketch; confirm with product
     default-currency: EUR
+  matching:
+    search-radius-m: ${MATCHING_SEARCH_RADIUS_M:5000}
+    candidate-count: ${MATCHING_CANDIDATE_COUNT:10}
+    offer-ttl: ${MATCHING_OFFER_TTL:30s}
+    heartbeat-timeout: ${MATCHING_HEARTBEAT_TIMEOUT:90s}
+    sweep-interval: ${MATCHING_SWEEP_INTERVAL:5s}
+  outbox:
+    poll-interval: ${OUTBOX_POLL_INTERVAL:500ms}
+    batch-size: ${OUTBOX_BATCH_SIZE:100}
 
 springdoc:
   api-docs:

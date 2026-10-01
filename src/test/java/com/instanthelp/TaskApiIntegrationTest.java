@@ -6,37 +6,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-/** Requires Docker (Testcontainers starts a throwaway PostgreSQL). Uses the "local" profile: dev secret + OTP 000000. */
-@SpringBootTest
-@AutoConfigureMockMvc
-@ActiveProfiles("local")
-@Testcontainers
-class TaskApiIntegrationTest {
-
-    @Container
-    @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
-
-    @Autowired MockMvc mvc;
-    @Autowired ObjectMapper json;
+class TaskApiIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void authenticatedUserCanCreateAndReadHelpRequest() throws Exception {
@@ -151,17 +129,6 @@ class TaskApiIntegrationTest {
     }
 
     // ---- helpers ----
-
-    private String signIn(String phone) throws Exception {
-        mvc.perform(post("/v1/auth/otp/request").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"phone\":\"" + phone + "\"}"))
-                .andExpect(status().isAccepted());
-        MvcResult result = mvc.perform(post("/v1/auth/otp/verify").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"phone\":\"" + phone + "\",\"code\":\"000000\"}"))
-                .andExpect(status().isOk())
-                .andReturn();
-        return json.readTree(result.getResponse().getContentAsString()).get("accessToken").asText();
-    }
 
     private Map<String, Object> validTask() {
         Instant start = Instant.now().plus(2, ChronoUnit.DAYS);
